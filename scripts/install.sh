@@ -23,7 +23,7 @@ fi
 TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "latest")"
 
 if [ -z "$TAG" ] || [ "$TAG" = "latest" ]; then
-  TAG="v1.0.0"
+  TAG="v1.0.1"
 fi
 
 FILE="${BIN_NAME}-${OS}-${ARCH}"
