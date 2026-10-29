@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Go build and coverage outputs
+/bakctl
+/coverage.out
+/coverage.html

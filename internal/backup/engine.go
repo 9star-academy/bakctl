@@ -1,17 +1,16 @@
 package backup
 
 import (
-	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/9star-academy/bakctl/internal/config"
@@ -30,260 +29,292 @@ type BackupResult struct {
 
 type Engine struct{}
 
-func NewEngine() *Engine {
-	return &Engine{}
-}
+func NewEngine() *Engine { return &Engine{} }
 
+// RunBackup stages a complete, compressed (optionally encrypted) artifact before
+// uploading it. Temporary plaintext is kept in a private directory and removed
+// on every return path. New artifacts never reuse a second-resolution filename.
 func (e *Engine) RunBackup(ctx context.Context, job *config.BackupJob, target *config.StorageTarget) (*BackupResult, error) {
-	start := time.Now()
-
-	// 1. Dump source into buffer
-	sourceData, err := e.dumpSource(ctx, job.Source)
-	if err != nil {
-		return nil, fmt.Errorf("读取/备份源失败: %w", err)
-	}
-	originalSize := int64(len(sourceData))
-
-	// 2. Compress with Gzip
-	var compressedBuf bytes.Buffer
-	gw, err := gzip.NewWriterLevel(&compressedBuf, gzip.BestCompression)
+	started := time.Now()
+	prefix, err := jobPrefix(job)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := gw.Write(sourceData); err != nil {
-		return nil, err
-	}
-	_ = gw.Close()
-
-	payload := compressedBuf.Bytes()
-	isEncrypted := false
-
-	// 3. Encrypt if key is set
-	if job.EncryptKey != "" {
-		key := crypto.DeriveKey(job.EncryptKey)
-		encrypted, err := crypto.Encrypt(payload, key)
-		if err != nil {
-			return nil, fmt.Errorf("数据加密失败: %w", err)
-		}
-		payload = encrypted
-		isEncrypted = true
-	}
-
-	compressedSize := int64(len(payload))
-
-	// 4. Construct remote file name: <prefix>/<job-name>_<YYYYMMDD_HHMMSS>.bak[.enc]
-	ext := ".bak.gz"
-	if isEncrypted {
-		ext += ".enc"
-	}
-	timestamp := time.Now().Format("20060102_150405")
-	fileName := fmt.Sprintf("%s_%s%s", job.Name, timestamp, ext)
-
-	prefix := ""
-	if parts := strings.Split(job.Target, ":"); len(parts) == 2 {
-		prefix = strings.Trim(parts[1], "/")
-	}
-	if prefix != "" {
-		prefix = prefix + "/"
-	}
-	remotePath := prefix + fileName
-
-	// 5. Upload to storage
 	client, err := storage.NewClient(target)
 	if err != nil {
 		return nil, err
 	}
-
-	if err := client.Upload(ctx, remotePath, bytes.NewReader(payload), compressedSize); err != nil {
-		return nil, fmt.Errorf("上传至云端存储失败: %w", err)
-	}
-
-	// 6. Enforce Retention Policy
-	if job.Keep > 0 {
-		e.pruneOldBackups(ctx, client, prefix+job.Name+"_", job.Keep)
-	}
-
-	return &BackupResult{
-		JobName:        job.Name,
-		FileName:       remotePath,
-		OriginalSize:   originalSize,
-		CompressedSize: compressedSize,
-		Encrypted:      isEncrypted,
-		Duration:       time.Since(start),
-	}, nil
-}
-
-func (e *Engine) dumpSource(ctx context.Context, src string) ([]byte, error) {
-	if strings.HasPrefix(src, "sqlite://") {
-		dbPath := strings.TrimPrefix(src, "sqlite://")
-		return e.dumpSQLite(ctx, dbPath)
-	}
-
-	if strings.HasPrefix(src, "pg://") || strings.HasPrefix(src, "postgres://") {
-		return e.dumpPostgres(ctx, src)
-	}
-
-	// Local file or directory
-	return e.archivePath(src)
-}
-
-func (e *Engine) dumpSQLite(ctx context.Context, dbPath string) ([]byte, error) {
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, fmt.Errorf("SQLite 数据库文件不存在: %s", dbPath)
-	}
-
-	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("bakctl_sqlite_%d.db", time.Now().UnixNano()))
-	defer os.Remove(tmpFile)
-
-	// Try sqlite3 CLI online hot backup
-	if _, err := exec.LookPath("sqlite3"); err == nil {
-		cmd := exec.CommandContext(ctx, "sqlite3", dbPath, fmt.Sprintf(".backup '%s'", tmpFile))
-		if err := cmd.Run(); err == nil {
-			return os.ReadFile(tmpFile)
-		}
-	}
-
-	// Direct copy fallback
-	return os.ReadFile(dbPath)
-}
-
-func (e *Engine) dumpPostgres(ctx context.Context, uri string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "pg_dump", uri)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("pg_dump 执行失败: %s (%w)", string(out), err)
-	}
-	return out, nil
-}
-
-func (e *Engine) archivePath(srcPath string) ([]byte, error) {
-	fi, err := os.Stat(srcPath)
+	workspace, err := os.MkdirTemp("", "bakctl-backup-")
 	if err != nil {
 		return nil, err
 	}
+	defer os.RemoveAll(workspace)
 
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-
-	if !fi.IsDir() {
-		// Single file
-		data, err := os.ReadFile(srcPath)
+	source, kind, mode, err := prepareSource(ctx, job.Source, workspace)
+	if err != nil {
+		return nil, fmt.Errorf("读取/备份源失败: %w", err)
+	}
+	if kind == kindDirectory {
+		resolvedWorkspace, err := resolvedPath(workspace)
 		if err != nil {
 			return nil, err
 		}
-		hdr := &tar.Header{
-			Name: filepath.Base(srcPath),
-			Mode: int64(fi.Mode()),
-			Size: fi.Size(),
+		if pathWithin(source, resolvedWorkspace) {
+			return nil, fmt.Errorf("临时目录位于备份源内；请将 TMPDIR 设置为备份源之外的目录")
 		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return nil, err
+		if target.Type == "local" {
+			base := target.Path
+			if base == "" {
+				base = "./backups"
+			}
+			resolvedTarget, err := resolvedPath(filepath.Join(base, filepath.FromSlash(strings.TrimSuffix(prefix, "/"))))
+			if err != nil {
+				return nil, err
+			}
+			if pathWithin(source, resolvedTarget) {
+				return nil, fmt.Errorf("本地备份目标必须位于备份源目录之外")
+			}
 		}
-		if _, err := tw.Write(data); err != nil {
-			return nil, err
-		}
-		_ = tw.Close()
-		return buf.Bytes(), nil
+	}
+	compressedPath := filepath.Join(workspace, "backup.gz")
+	compressed, err := os.OpenFile(compressedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, err
+	}
+	gw := gzip.NewWriter(compressed)
+	originalSize, writeErr := writeSource(ctx, gw, source, kind, mode)
+	gzipErr := gw.Close()
+	closeErr := compressed.Close()
+	if writeErr != nil {
+		return nil, fmt.Errorf("备份源失败: %w", writeErr)
+	}
+	if gzipErr != nil {
+		return nil, gzipErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 
-	// Directory tree
-	err = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
+	payloadPath := compressedPath
+	encrypted := job.EncryptKey != ""
+	if encrypted {
+		payloadPath = filepath.Join(workspace, "backup.enc")
+		if err := transformFile(ctx, compressedPath, payloadPath, func(dst io.Writer, src io.Reader) error {
+			return crypto.EncryptStream(dst, src, job.EncryptKey)
+		}); err != nil {
+			return nil, fmt.Errorf("数据加密失败: %w", err)
 		}
-		rel, err := filepath.Rel(srcPath, path)
-		if err != nil {
-			return nil
+	}
+	payload, err := os.Open(payloadPath)
+	if err != nil {
+		return nil, err
+	}
+	defer payload.Close()
+	info, err := payload.Stat()
+	if err != nil {
+		return nil, err
+	}
+	var random [8]byte
+	if _, err := io.ReadFull(rand.Reader, random[:]); err != nil {
+		return nil, err
+	}
+	name := fmt.Sprintf("%s_%s-%s.bak.gz", job.Name, time.Now().UTC().Format("20060102_150405.000000000"), hex.EncodeToString(random[:]))
+	if encrypted {
+		name += ".enc"
+	}
+	remotePath := prefix + name
+	if err := client.Upload(ctx, remotePath, payload, info.Size()); err != nil {
+		return nil, fmt.Errorf("上传至存储失败: %w", err)
+	}
+	result := &BackupResult{JobName: job.Name, FileName: remotePath, OriginalSize: originalSize, CompressedSize: info.Size(), Encrypted: encrypted, Duration: time.Since(started)}
+	if job.Keep > 0 {
+		if err := pruneOldBackups(ctx, client, job); err != nil {
+			return result, fmt.Errorf("备份已上传，但清理旧备份失败: %w", err)
 		}
-		if rel == "." {
-			return nil
-		}
+	}
+	result.Duration = time.Since(started)
+	return result, nil
+}
 
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = rel
-
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-
-		fileData, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		_, err = tw.Write(fileData)
+func pruneOldBackups(ctx context.Context, client storage.Client, job *config.BackupJob) error {
+	files, err := ListJobBackups(ctx, client, job)
+	if err != nil {
 		return err
-	})
-
-	_ = tw.Close()
-	return buf.Bytes(), err
+	}
+	for i := 0; i < len(files)-job.Keep; i++ {
+		if err := client.Delete(ctx, files[i].Path); err != nil {
+			return fmt.Errorf("删除 %s: %w", files[i].Path, err)
+		}
+	}
+	return nil
 }
 
-func (e *Engine) pruneOldBackups(ctx context.Context, client storage.Client, prefix string, keep int) {
-	files, err := client.List(ctx, prefix)
-	if err != nil || len(files) <= keep {
-		return
-	}
-
-	// Sort newest first
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].LastModified.After(files[j].LastModified)
-	})
-
-	// Delete from index keep to end
-	for i := keep; i < len(files); i++ {
-		_ = client.Delete(ctx, files[i].Path)
-	}
+// Restore restores self-describing v2 backups. Ambiguous legacy archives require
+// RestoreForSource or RestoreWithType; silently guessing file vs directory is unsafe.
+func (e *Engine) Restore(ctx context.Context, client storage.Client, remotePath, encryptKey, destPath string) error {
+	return e.RestoreWithType(ctx, client, remotePath, encryptKey, destPath, "")
 }
 
-// Restore downloads, decrypts, and extracts a backup file
-func (e *Engine) Restore(ctx context.Context, client storage.Client, remotePath string, encryptKey string, destPath string) error {
+// RestoreForSource uses the configured source only as a hint for legacy backups.
+// New backups carry their own type, so the original source may be gone or changed.
+func (e *Engine) RestoreForSource(ctx context.Context, client storage.Client, remotePath, encryptKey, destPath, source string) error {
+	legacyType := ""
+	if strings.HasPrefix(source, "sqlite://") || isPostgres(source) {
+		legacyType = "raw"
+	} else if info, err := os.Stat(source); err == nil {
+		if info.IsDir() {
+			legacyType = "directory"
+		} else if info.Mode().IsRegular() {
+			legacyType = "file"
+		}
+	}
+	return e.RestoreWithType(ctx, client, remotePath, encryptKey, destPath, legacyType)
+}
+
+// RestoreWithType accepts file, directory or raw as a legacy-only type hint.
+// It validates and stages the full result before publishing a new destination.
+func (e *Engine) RestoreWithType(ctx context.Context, client storage.Client, remotePath, encryptKey, destPath, legacyType string) error {
+	switch legacyType {
+	case "", "file", "directory", "raw":
+	default:
+		return fmt.Errorf("无效的旧备份类型: %s", legacyType)
+	}
+	destPath, err := filepath.Abs(destPath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(destPath); err == nil {
+		return fmt.Errorf("恢复目标已存在，拒绝覆盖: %s", destPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0700); err != nil {
+		return err
+	}
+	workspace, err := os.MkdirTemp(filepath.Dir(destPath), ".bakctl-restore-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workspace)
 	reader, err := client.Download(ctx, remotePath)
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
-
-	data, err := io.ReadAll(reader)
+	downloaded := filepath.Join(workspace, "download")
+	err = writePrivateFile(downloaded, func(dst io.Writer) error {
+		_, err := io.Copy(dst, &contextReader{ctx: ctx, reader: reader})
+		return err
+	})
+	closeErr := reader.Close()
 	if err != nil {
 		return err
 	}
-
-	// Decrypt if .enc
+	if closeErr != nil {
+		return closeErr
+	}
+	compressed := downloaded
 	if strings.HasSuffix(remotePath, ".enc") {
 		if encryptKey == "" {
 			return fmt.Errorf("此备份已被加密，恢复时必须提供解密密码 (--key)")
 		}
-		key := crypto.DeriveKey(encryptKey)
-		decrypted, err := crypto.Decrypt(data, key)
-		if err != nil {
+		compressed = filepath.Join(workspace, "decrypted.gz")
+		if err := transformFile(ctx, downloaded, compressed, func(dst io.Writer, src io.Reader) error {
+			return crypto.DecryptStream(dst, src, encryptKey)
+		}); err != nil {
 			return fmt.Errorf("解密失败: %w", err)
 		}
-		data = decrypted
 	}
-
-	// Decompress Gzip
-	gr, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("解压缩失败: %w", err)
+	unpacked := filepath.Join(workspace, "payload")
+	if err := transformFile(ctx, compressed, unpacked, func(dst io.Writer, src io.Reader) error {
+		gr, err := gzip.NewReader(src)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(dst, gr)
+		closeErr := gr.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}); err != nil {
+		return fmt.Errorf("解压缩或完整性检查失败: %w", err)
 	}
-	defer gr.Close()
-
-	decompressed, err := io.ReadAll(gr)
+	staged := filepath.Join(workspace, "result")
+	directory, err := restorePayload(ctx, unpacked, staged, legacyType)
 	if err != nil {
 		return err
 	}
-
-	// Write to destPath
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if !directory {
+		// Hard-link publication is atomic and cannot replace an existing path.
+		if err := os.Link(staged, destPath); err != nil {
+			return fmt.Errorf("发布恢复文件失败: %w", err)
+		}
+		return nil
+	}
+	// Serialize bakctl publications in this directory, then re-check the target.
+	// Renaming a directory cannot replace a non-empty destination. The lock also
+	// prevents two concurrent empty-directory restores from replacing each other.
+	parent, err := os.Open(filepath.Dir(destPath))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	if err := syscall.Flock(int(parent.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(parent.Fd()), syscall.LOCK_UN)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(destPath); err == nil {
+		return fmt.Errorf("恢复目标已存在，拒绝覆盖: %s", destPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(staged, destPath); err != nil {
+		return fmt.Errorf("发布恢复目录失败: %w", err)
+	}
+	return nil
+}
 
-	return os.WriteFile(destPath, decompressed, 0644)
+func transformFile(ctx context.Context, input, output string, transform func(io.Writer, io.Reader) error) error {
+	source, err := os.Open(input)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	return writePrivateFile(output, func(dst io.Writer) error {
+		return transform(dst, &contextReader{ctx: ctx, reader: source})
+	})
+}
+
+func writePrivateFile(path string, write func(io.Writer) error) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	err = write(file)
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }

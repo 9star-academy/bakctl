@@ -60,8 +60,7 @@ func TestEngineBackupAndRestore(t *testing.T) {
 		t.Fatalf("read restored file failed: %v", err)
 	}
 
-	// Since sourceFile is a single file, it's packed in a tar archive or raw file
-	if len(restoredData) == 0 {
-		t.Fatalf("restored data is empty")
+	if string(restoredData) != testContent {
+		t.Fatalf("restored data mismatch: got %q, want %q", restoredData, testContent)
 	}
 }

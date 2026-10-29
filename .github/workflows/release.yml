@@ -21,8 +21,15 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Install SQLite integration prerequisite
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
       - name: Run Tests
-        run: go test -v ./...
+        run: |
+          sqlite3 --version
+          go test -race ./...
+          go vet ./...
+          bash -n scripts/install.sh
 
       - name: Build Matrix Binaries
         run: |
@@ -35,12 +42,30 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/bakctl-darwin-amd64 ./cmd/bakctl
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/bakctl-darwin-arm64 ./cmd/bakctl
 
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum bakctl-* > SHA256SUMS
+
+      - name: Prepare release notes
+        run: |
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            cp "$NOTES" "$RUNNER_TEMP/release-notes.md"
+          else
+            printf 'Release %s\n' "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          body_path: ${{ runner.temp }}/release-notes.md
           files: |
             dist/bakctl-linux-amd64
             dist/bakctl-linux-arm64
             dist/bakctl-darwin-amd64
             dist/bakctl-darwin-arm64
+            dist/SHA256SUMS
           generate_release_notes: true

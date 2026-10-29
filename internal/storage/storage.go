@@ -26,6 +26,9 @@ type Client interface {
 
 // NewClient initializes a storage client for a given target.
 func NewClient(target *config.StorageTarget) (Client, error) {
+	if target == nil {
+		return nil, fmt.Errorf("存储配置不能为空")
+	}
 	switch target.Type {
 	case "local":
 		return NewLocalClient(target.Path), nil

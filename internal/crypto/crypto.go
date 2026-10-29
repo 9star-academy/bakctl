@@ -10,7 +10,8 @@ import (
 	"io"
 )
 
-// DeriveKey derives a 32-byte AES key from a passphrase.
+// DeriveKey preserves the v1 SHA-256 key derivation for legacy decoding.
+// New backup encryption must use EncryptStream with its salted password KDF.
 func DeriveKey(passphrase string) []byte {
 	hash := sha256.Sum256([]byte(passphrase))
 	return hash[:]
