@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title description">
+  <title id="title">bakctl — backup and restore for your server</title>
+  <desc id="description">A dark terminal-inspired banner for bakctl, showing backup and restore commands and support for local storage, S3, and Cloudflare R2.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#102337"/>
+      <stop offset="1" stop-color="#080f1c"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#26cda2" stop-opacity=".17"/>
+      <stop offset="1" stop-color="#26cda2" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#b5dded" stroke-opacity=".045"/>
+    </pattern>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#5ee6ba"/>
+      <stop offset="1" stop-color="#52caff"/>
+    </linearGradient>
+    <clipPath id="frame"><rect width="1280" height="420" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="420" fill="url(#background)"/>
+    <rect width="1280" height="420" fill="url(#grid)"/>
+    <ellipse cx="220" cy="170" rx="470" ry="380" fill="url(#glow)"/>
+    <path d="M0 419H1280" stroke="url(#accent)" stroke-width="4"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <rect x="52" y="48" width="178" height="28" rx="14" fill="#153b3e" stroke="#2d625f"/>
+    <circle cx="68" cy="62" r="3" fill="#64e7b8"/>
+    <text x="82" y="66" font-size="10" font-weight="700" letter-spacing="1.8" fill="#99efd5">BACKUP &amp; RESTORE</text>
+    <text x="49" y="184" font-size="96" font-weight="750" letter-spacing="-5" fill="#f1f7fc">bakctl<tspan fill="#67e7bf">_</tspan></text>
+    <text x="54" y="232" font-size="24" font-weight="450" fill="#c0d3e2">Small binary. Serious backups.</text>
+    <path d="M54 265H102" stroke="url(#accent)" stroke-width="3" stroke-linecap="round"/>
+    <text x="54" y="300" font-size="12" font-weight="600" letter-spacing="1.4" fill="#8fa9be">FILES · SQLITE · POSTGRESQL</text>
+    <text x="54" y="326" font-size="12" font-weight="600" letter-spacing="1.4" fill="#8fa9be">LOCAL · S3 · CLOUDFLARE R2</text>
+  </g>
+  <g>
+    <rect x="600" y="65" width="628" height="290" rx="15" fill="#050b14" opacity=".3"/>
+    <rect x="590" y="55" width="638" height="290" rx="15" fill="#101c2c" stroke="#2b4257"/>
+    <path d="M591 97H1227" stroke="#283b4d"/>
+    <circle cx="611" cy="77" r="5" fill="#fb7185"/>
+    <circle cx="629" cy="77" r="5" fill="#fbbf62"/>
+    <circle cx="647" cy="77" r="5" fill="#66d9ad"/>
+    <text x="890" y="81" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" letter-spacing="1" fill="#8aa3b9">bakctl / terminal</text>
+    <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="15">
+      <text x="616" y="137" fill="#e1eaf4"><tspan fill="#65e2b3">$ </tspan>sudo bakctl run uploads</text>
+      <text x="616" y="167" fill="#71deb6" font-family="'PingFang SC', 'Microsoft YaHei', sans-serif">✔ 备份成功完成！</text>
+      <text x="616" y="215" fill="#e1eaf4"><tspan fill="#65e2b3">$ </tspan>sudo bakctl restore uploads \</text>
+      <text x="634" y="240" fill="#8fb3cf">--to ./restored</text>
+      <text x="616" y="270" fill="#71deb6" font-family="'PingFang SC', 'Microsoft YaHei', sans-serif">✔ 数据已成功解密恢复</text>
+    </g>
+    <path d="M616 296H1202" stroke="#263b4d"/>
+    <text x="616" y="322" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="10" font-weight="600" letter-spacing="1.7" fill="#7f9ab0">COMPRESS → ENCRYPT (OPTIONAL) → STORE → RESTORE</text>
+    <rect x="1189" y="311" width="7" height="12" rx="1" fill="#65e2b3"/>
+  </g>
+</svg>
