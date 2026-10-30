@@ -5,7 +5,7 @@
   <p>文件 · 目录 · SQLite · PostgreSQL<br />gzip 压缩 · 可选 AES-256-GCM 加密 · 本地 / S3 存储 · systemd 定时</p>
 
   <p>
-    <a href="https://github.com/9star-academy/bakctl/releases/tag/v1.1.0-rc.1"><img src="https://img.shields.io/badge/release-v1.1.0--rc.1-38bdf8?style=flat-square" alt="Release v1.1.0-rc.1（预发布）" /></a>
+    <a href="https://github.com/9star-academy/bakctl/releases/tag/v1.1.0-rc.2"><img src="https://img.shields.io/badge/release-v1.1.0--rc.2-38bdf8?style=flat-square" alt="Release v1.1.0-rc.2（预发布）" /></a>
     <a href="https://github.com/9star-academy/bakctl/actions/workflows/ci.yml"><img src="https://github.com/9star-academy/bakctl/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI 构建状态" /></a>
     <a href="go.mod"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white" alt="Go 1.24 或更新版本" /></a>
     <a href="#install"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-64748b?style=flat-square" alt="Linux 和 macOS" /></a>
@@ -24,7 +24,7 @@
 </div>
 
 > [!IMPORTANT]
-> 当前验收版本为 **[v1.1.0-rc.1](https://github.com/9star-academy/bakctl/releases/tag/v1.1.0-rc.1)**，属于预发布版。请按下方命令固定版本安装，并完成恢复演练后再用于正式数据。查看 [发布说明](docs/releases/v1.1.0-rc.1.md) · [验收指南](docs/testing.md)。
+> 当前验收版本为 **[v1.1.0-rc.2](https://github.com/9star-academy/bakctl/releases/tag/v1.1.0-rc.2)**，属于预发布版。请按下方命令固定版本安装，并完成恢复演练后再用于正式数据。查看 [发布说明](docs/releases/v1.1.0-rc.2.md) · [验收指南](docs/testing.md)。
 
 <a id="features"></a>
 
@@ -56,15 +56,15 @@
 支持 Linux / macOS 的 `amd64` 与 `arm64`。需要 `curl`，以及 `sha256sum` 或 macOS 的 `shasum`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/9star-academy/bakctl/v1.1.0-rc.1/scripts/install.sh -o /tmp/bakctl-install.sh
-sudo env BAKCTL_VERSION=v1.1.0-rc.1 bash /tmp/bakctl-install.sh
+curl -fsSL https://raw.githubusercontent.com/9star-academy/bakctl/v1.1.0-rc.2/scripts/install.sh -o /tmp/bakctl-install.sh
+sudo env BAKCTL_VERSION=v1.1.0-rc.2 bash /tmp/bakctl-install.sh
 bakctl --version
 ```
 
 预期输出：
 
 ```text
-bakctl version v1.1.0-rc.1
+bakctl version v1.1.0-rc.2
 ```
 
 安装脚本会校验 Release 的 `SHA256SUMS`，再原子替换程序；网络或校验失败会保留已安装版本。不指定 `BAKCTL_VERSION` 时仅查询最新正式 Release，不会选择 RC。缺少校验和的旧 Release 会明确安装失败。
@@ -75,7 +75,7 @@ bakctl version v1.1.0-rc.1
 安装到个人目录：
 
 ```bash
-BAKCTL_VERSION=v1.1.0-rc.1 BAKCTL_INSTALL_DIR="$HOME/.local/bin" bash /tmp/bakctl-install.sh
+BAKCTL_VERSION=v1.1.0-rc.2 BAKCTL_INSTALL_DIR="$HOME/.local/bin" bash /tmp/bakctl-install.sh
 ```
 
 请将 `$HOME/.local/bin` 加入 `PATH`；也可通过 `BAKCTL_VERSION=vX.Y.Z` 固定其他已发布版本。
